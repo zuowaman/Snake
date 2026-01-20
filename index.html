@@ -1,1 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>霓虹貪食蛇 (Neon Snake)</title>
+    <style>
+        /* * 基礎樣式設定 
+         * 使用 Flexbox 讓遊戲畫面在任何裝置上都置中
+         */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f0f1a; /* 深藍色背景 */
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden; /* 防止手機上下拉動重整 */
+            touch-action: none; /* 禁止預設觸控行為 */
+        }
 
+        /* 遊戲容器 */
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 255, 204, 0.2);
+            border-radius: 8px;
+            background: #000;
+        }
+
+        /* 畫布 */
+        canvas {
+            display: block;
+            border-radius: 4px;
+            background-color: #050505;
+            border: 2px solid #333;
+        }
+
+        /* 分數面板 */
+        .ui-panel {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
+        .score-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 5px 15px;
+            border-radius: 20px;
+        }
+
+        /* 覆蓋層 (開始畫面/遊戲結束) */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        h1 {
+            margin: 0 0 20px 0;
+            font-size: 3rem;
+            color: #00ffcc;
+            text-shadow: 0 0 20px #00ffcc, 0 0 40px #00ffcc;
+            letter-spacing: 2px;
+        }
+
+        p {
+            font-size: 1.2rem;
+            color: #ddd;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #ff00cc, #3333ff);
+            border: none;
+            padding: 15px 40px;
+            color: white;
+            font-size: 1.5rem;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(255, 0, 204, 0.5);
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px rgba(255, 0, 204, 0.8);
+        }
+
+        .controls-hint {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #888;
+        }
+
+        /* 手機按鈕 (僅在手機螢幕顯示，作為備用，雖然支援滑動) */
+        .mobile-controls {
+            display: none;
+        }
+        
+        @media (max-width: 600px) {
+            h1 { font-size: 2rem; }
+            .ui-panel { width: 95%; font-size: 1rem; }
+            #game-container { width: 95vw; height: 95vw; max-height: 80vh; }
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- 分數顯示區 -->
+    <div class="ui-panel" style="max-width: 400px;">
+        <div class="score-box">分數: <span id="score">0</span></div>
+        <div class="score-box">最高分: <span id="high-score">0</span></div>
+    </div>
+
+    <!-- 遊戲主要容器 -->
+    <div id="game-container">
+        <canvas id="gameCanvas" width="400" height="400"></canvas>
+        
+        <!-- 遊戲開始/結束 覆蓋層 -->
+        <div id="overlay">
+            <h1 id="overlay-title">霓虹貪食蛇</h1>
+            <p id="overlay-msg">準備好挑戰了嗎？</p>
+            <button class="btn" onclick="startGame()">開始遊戲</button>
+            <div class="controls-hint">電腦: 方向鍵或 WASD<br>手機: 滑動螢幕</div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. 類別定義 (必須放在最上方，避免 Temporal Dead Zone 錯誤)
+        // ==========================================
+        class SnakePart {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+            }
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                // 隨機噴射方向
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10;
+                this.life = 1.0; // 生命值
+                this.color = `hsl(${Math.random() * 60 + 300}, 100%, 50%)`; // 紫紅色系
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.05; // 漸漸消失
+            }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        // ==========================================
+        // 2. 全域變數宣告
+        // ==========================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('high-score');
+        const overlay = document.getElementById('overlay');
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlayMsg = document.getElementById('overlay-msg');
+        const startBtn = document.querySelector('.btn');
+
+        // 遊戲設定
+        const tileCount = 20; // 格子數量 (20x20)
+        let gridSize = canvas.width / tileCount; // 每個格子的大小
+        
+        let speed = 7; // 遊戲速度 (每秒幀數)
+        let score = 0;
+        let highScore = localStorage.getItem('snakeHighScore') || 0;
+        highScoreEl.innerText = highScore;
+
+        // 蛇與食物
+        let headX = 10;
+        let headY = 10;
+        let snakeParts = []; // 身體陣列
+        let tailLength = 2; // 初始長度
+        let appleX = 5;
+        let appleY = 5;
+
+        // 移動方向
+        let xVelocity = 0;
+        let yVelocity = 0;
+        let lastXVelocity = 0; 
+        let lastYVelocity = 0;
+
+        // 遊戲狀態
+        let gameRunning = false;
+        let animationFrameId;
+        let lastTime = 0;
+
+        // 粒子特效陣列
+        let particles = [];
+
+        // ==========================================
+        // 3. 基礎繪圖與輔助函式 (在被呼叫前定義)
+        // ==========================================
+        
+        function clearScreen() {
+            ctx.fillStyle = '#050505'; // 背景色
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // 定義 drawScore 為空函式 (以防呼叫出錯)，但這裡使用 DOM 更新
+        function drawScore() {}
+
+        // 初始繪製 (定義在這裡，確保 resizeGame 可以呼叫它)
+        function drawGame() {
+            clearScreen();
+            drawScore();
+        }
+
+        function createParticles(x, y) {
+            for(let i=0; i<8; i++) {
+                particles.push(new Particle(x, y));
+            }
+        }
+
+        function drawParticles() {
+            for(let i=particles.length-1; i>=0; i--) {
+                let p = particles[i];
+                p.update();
+                p.draw(ctx);
+                if(p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // ==========================================
+        // 4. 遊戲核心邏輯函式
+        // ==========================================
+
+        function isGameOver() {
+            let gameOver = false;
+
+            // 沒開始移動不算輸
+            if (xVelocity === 0 && yVelocity === 0) return false;
+
+            // 撞牆
+            if (headX < 0 || headX >= tileCount || headY < 0 || headY >= tileCount) {
+                gameOver = true;
+            }
+
+            // 撞自己
+            for (let i = 0; i < snakeParts.length; i++) {
+                let part = snakeParts[i];
+                if (part.x === headX && part.y === headY) {
+                    gameOver = true;
+                    break;
+                }
+            }
+            return gameOver;
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            
+            // 更新最高分
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('snakeHighScore', highScore);
+                highScoreEl.innerText = highScore;
+                overlayMsg.innerText = `新紀錄！分數: ${score}`;
+            } else {
+                overlayMsg.innerText = `遊戲結束！分數: ${score}`;
+            }
+
+            overlayTitle.innerText = "GAME OVER";
+            startBtn.innerText = "再玩一次";
+            overlay.style.display = 'flex';
+        }
+
+        function drawSnake() {
+            // 畫身體
+            for (let i = 0; i < snakeParts.length; i++) {
+                let part = snakeParts[i];
+                
+                // 漸層色
+                let gradient = ctx.createLinearGradient(
+                    part.x * gridSize, part.y * gridSize, 
+                    (part.x + 1) * gridSize, (part.y + 1) * gridSize
+                );
+                gradient.addColorStop(0, "#00ffcc");
+                gradient.addColorStop(1, "#00ccaa");
+
+                ctx.fillStyle = gradient;
+                
+                // 霓虹發光
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = "#00ffcc";
+                
+                // 畫圓角矩形
+                ctx.beginPath();
+                ctx.roundRect(part.x * gridSize + 1, part.y * gridSize + 1, gridSize - 2, gridSize - 2, 4);
+                ctx.fill();
+            }
+
+            // 儲存頭部位置 - 這裡使用 SnakePart，因為類別已在最上方定義，所以不會報錯
+            snakeParts.push(new SnakePart(headX, headY));
+            while (snakeParts.length > tailLength) {
+                snakeParts.shift(); // 移除尾巴
+            }
+
+            // 畫頭部
+            ctx.fillStyle = '#ccffee';
+            ctx.shadowBlur = 20;
+            ctx.beginPath();
+            ctx.roundRect(headX * gridSize, headY * gridSize, gridSize, gridSize, 6);
+            ctx.fill();
+            
+            // 畫眼睛
+            ctx.fillStyle = '#000';
+            ctx.shadowBlur = 0;
+            let eyeOffsetX = gridSize / 4;
+            let eyeOffsetY = gridSize / 4;
+            ctx.fillRect(headX * gridSize + eyeOffsetX, headY * gridSize + eyeOffsetY, gridSize/5, gridSize/5);
+            ctx.fillRect(headX * gridSize + gridSize - eyeOffsetX*1.5, headY * gridSize + eyeOffsetY, gridSize/5, gridSize/5);
+        }
+
+        function changeSnakePosition() {
+            headX = headX + xVelocity;
+            headY = headY + yVelocity;
+            
+            lastXVelocity = xVelocity;
+            lastYVelocity = yVelocity;
+        }
+
+        function drawApple() {
+            ctx.fillStyle = "#ff0066";
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "#ff0066";
+            
+            ctx.beginPath();
+            let radius = gridSize / 2 - 2;
+            let cx = appleX * gridSize + gridSize / 2;
+            let cy = appleY * gridSize + gridSize / 2;
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.shadowBlur = 0;
+        }
+
+        function checkAppleCollision() {
+            if (appleX === headX && appleY === headY) {
+                generateApple();
+                tailLength++;
+                score++;
+                scoreEl.innerText = score;
+                
+                if (speed < 15 && score % 2 === 0) {
+                    speed += 0.5;
+                }
+
+                createParticles(headX * gridSize + gridSize/2, headY * gridSize + gridSize/2);
+            }
+        }
+
+        function generateApple() {
+            while(true) {
+                appleX = Math.floor(Math.random() * tileCount);
+                appleY = Math.floor(Math.random() * tileCount);
+                
+                let collision = false;
+                for(let part of snakeParts) {
+                    if(part.x === appleX && part.y === appleY) {
+                        collision = true;
+                        break;
+                    }
+                }
+                if (headX === appleX && headY === appleY) collision = true;
+                
+                if(!collision) break;
+            }
+        }
+
+        // ==========================================
+        // 5. 遊戲迴圈與控制
+        // ==========================================
+
+        function gameLoop(currentTime) {
+            if (!gameRunning) return;
+
+            window.requestAnimationFrame(gameLoop);
+
+            const secondsSinceLastRender = (currentTime - lastTime) / 1000;
+            if (secondsSinceLastRender < 1 / speed) return;
+
+            lastTime = currentTime;
+
+            changeSnakePosition();
+            let result = isGameOver();
+            if (result) {
+                gameOver();
+                return;
+            }
+
+            clearScreen();
+            checkAppleCollision();
+            drawApple();
+            drawSnake();
+            drawParticles();
+            drawScore();
+        }
+
+        function startGame() {
+            if (gameRunning) return;
+            
+            headX = 10;
+            headY = 10;
+            snakeParts = [];
+            tailLength = 2;
+            score = 0;
+            speed = 7;
+            xVelocity = 0;
+            yVelocity = 0;
+            lastXVelocity = 0;
+            lastYVelocity = 0;
+            scoreEl.innerText = score;
+            
+            generateApple();
+
+            gameRunning = true;
+            overlay.style.display = 'none';
+            
+            lastTime = performance.now();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // ==========================================
+        // 6. 初始化與事件監聽 (確保呼叫順序正確)
+        // ==========================================
+
+        function resizeGame() {
+            // 讓 Canvas 在小螢幕上自適應
+            const maxWidth = Math.min(window.innerWidth * 0.95, window.innerHeight * 0.7, 500);
+            canvas.width = maxWidth;
+            canvas.height = maxWidth;
+            gridSize = canvas.width / tileCount;
+            
+            // 確保 drawGame 在這裡被呼叫時已經被定義了
+            if (typeof drawGame === 'function') {
+                drawGame(); 
+            }
+        }
+        
+        window.addEventListener('resize', resizeGame);
+        
+        // 鍵盤控制
+        document.body.addEventListener('keydown', keyDown);
+
+        function keyDown(event) {
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(event.code) > -1) {
+                event.preventDefault();
+            }
+
+            if (!gameRunning && event.code === "Space") {
+                startGame();
+                return;
+            }
+
+            // 方向控制
+            if ((event.code === "ArrowUp" || event.key === "w") && lastYVelocity !== 1) {
+                yVelocity = -1;
+                xVelocity = 0;
+            }
+            if ((event.code === "ArrowDown" || event.key === "s") && lastYVelocity !== -1) {
+                yVelocity = 1;
+                xVelocity = 0;
+            }
+            if ((event.code === "ArrowLeft" || event.key === "a") && lastXVelocity !== 1) {
+                yVelocity = 0;
+                xVelocity = -1;
+            }
+            if ((event.code === "ArrowRight" || event.key === "d") && lastXVelocity !== -1) {
+                yVelocity = 0;
+                xVelocity = 1;
+            }
+        }
+
+        // 觸控控制
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        canvas.addEventListener('touchstart', function(e) {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+            e.preventDefault(); 
+        }, {passive: false});
+
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+        }, {passive: false});
+
+        canvas.addEventListener('touchend', function(e) {
+            if (!gameRunning) return;
+
+            let touchEndX = e.changedTouches[0].screenX;
+            let touchEndY = e.changedTouches[0].screenY;
+
+            let dx = touchEndX - touchStartX;
+            let dy = touchEndY - touchStartY;
+
+            if (Math.abs(dx) > Math.abs(dy)) {
+                if (dx > 0 && lastXVelocity !== -1) {
+                    xVelocity = 1; yVelocity = 0;
+                } else if (dx < 0 && lastXVelocity !== 1) {
+                    xVelocity = -1; yVelocity = 0;
+                }
+            } else {
+                if (dy > 0 && lastYVelocity !== -1) {
+                    yVelocity = 1; xVelocity = 0;
+                } else if (dy < 0 && lastYVelocity !== 1) {
+                    yVelocity = -1; xVelocity = 0;
+                }
+            }
+        });
+
+        // 最後一步：啟動初始化
+        resizeGame();
+
+    </script>
+</body>
+</html>
